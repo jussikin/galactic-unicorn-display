@@ -1,0 +1,43 @@
+[package]
+name = "unicorn-display"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "unicorn-display"
+test = false
+bench = false
+
+[dependencies]
+embassy-executor  = { version = "0.6", features = ["task-arena-size-32768", "arch-cortex-m", "executor-thread", "executor-interrupt", "defmt", "integrated-timers"] }
+embassy-rp        = { version = "0.2", features = ["defmt", "unstable-pac", "time-driver", "critical-section-impl", "rp2040"] }
+embassy-time      = { version = "0.3", features = ["defmt", "defmt-timestamp-uptime"] }
+embassy-net       = { version = "0.4", features = ["defmt", "tcp", "udp", "dns", "dhcpv4", "medium-ethernet"] }
+embassy-sync      = { version = "0.6", features = ["defmt"] }
+embassy-futures   = { version = "0.1" }
+
+cyw43             = { version = "0.2", features = ["defmt", "firmware-logs"] }
+cyw43-pio         = { version = "0.2", features = ["defmt"] }
+
+minimq            = { version = "0.9", default-features = false }
+
+defmt             = "0.3"
+defmt-rtt         = "0.4"
+panic-probe       = { version = "0.3", features = ["print-defmt"] }
+
+cortex-m          = { version = "0.7", features = ["inline-asm"] }
+cortex-m-rt       = "0.7"
+heapless          = "0.8"
+static-cell       = "2"
+fixed             = "1"
+
+[profile.dev]
+debug = 2
+opt-level = "s"
+lto = "fat"
+
+[profile.release]
+debug = 2
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
