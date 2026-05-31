@@ -32,10 +32,19 @@ cd firmware && sh fetch.sh           # downloads CYW43 firmware blobs
 
 ## Configuration
 
-Edit `src/config.rs` before flashing:
+`src/config.rs` holds WiFi credentials and is **gitignored**. Create it from the
+template, then edit:
+
+```sh
+cp src/config.example.rs src/config.rs
+```
+
 - `WIFI_SSID` / `WIFI_PASSWORD`
 - `MQTT_BROKER_IP` (as `[u8; 4]`)
 - `TOPICS` — list of `(topic, label, (r, g, b))` tuples
+
+Keep real credentials only in `src/config.rs` (never committed). When config keys
+change, update `src/config.example.rs` too.
 
 ## Build & flash
 

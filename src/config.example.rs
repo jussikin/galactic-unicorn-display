@@ -1,3 +1,10 @@
+// Configuration template.
+//
+// Copy this file to `src/config.rs` and fill in your real values:
+//     cp src/config.example.rs src/config.rs
+//
+// `src/config.rs` is gitignored so your WiFi credentials never get committed.
+
 // WiFi credentials — fill in before flashing
 pub const WIFI_SSID: &str = "YOUR_WIFI_SSID";
 pub const WIFI_PASSWORD: &str = "YOUR_WIFI_PASSWORD";
