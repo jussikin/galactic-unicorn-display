@@ -1,18 +1,20 @@
-use cyw43::JoinOptions;
 use cyw43_pio::PioSpi;
-use defmt::{error, info, warn};
-use embassy_rp::peripherals::{DMA_CH0, PIN_23, PIN_24, PIN_25, PIN_29, PIO1};
-use embassy_rp::pio::Pio;
+use defmt::{info, warn};
+use embassy_rp::bind_interrupts;
 use embassy_rp::gpio::{Level, Output};
+use embassy_rp::peripherals::{DMA_CH0, PIN_23, PIN_24, PIN_25, PIN_29, PIO1};
+use embassy_rp::pio::{InterruptHandler as PioInterruptHandler, Pio};
 use embassy_time::{Duration, Timer};
 use static_cell::StaticCell;
 
 use crate::config::{WIFI_PASSWORD, WIFI_SSID};
 
-// Firmware blobs must be included at build time from the cyw43-firmware crate
-// (or placed manually in the project).
 const FIRMWARE: &[u8] = include_bytes!("../firmware/43439A0.bin");
 const CLM: &[u8] = include_bytes!("../firmware/43439A0_clm.bin");
+
+bind_interrupts!(struct WifiIrqs {
+    PIO1_IRQ_0 => PioInterruptHandler<PIO1>;
+});
 
 pub type NetDriver = cyw43::NetDriver<'static>;
 
@@ -29,12 +31,11 @@ pub async fn init(
 ) -> (NetDriver, cyw43::Control<'static>) {
     let pwr = Output::new(pwr, Level::Low);
     let cs = Output::new(cs, Level::High);
-    let mut pio = Pio::new(pio, cyw43_pio::Irqs);
+    let mut pio = Pio::new(pio, WifiIrqs);
     let spi = PioSpi::new(&mut pio.common, pio.sm0, pio.irq0, cs, dio, clk, dma);
 
     let state = STATE.init(cyw43::State::new());
-    let (net_device, mut control, runner) =
-        cyw43::new(state, pwr, spi, FIRMWARE).await;
+    let (net_device, mut control, runner) = cyw43::new(state, pwr, spi, FIRMWARE).await;
 
     spawner.spawn(cyw43_task(runner)).unwrap();
 
@@ -49,16 +50,14 @@ pub async fn init(
 pub async fn join(control: &mut cyw43::Control<'static>) {
     loop {
         info!("Joining WiFi \"{}\"", WIFI_SSID);
-        match control
-            .join(WIFI_SSID, JoinOptions::new(WIFI_PASSWORD.as_bytes()))
-            .await
-        {
+        match control.join_wpa2(WIFI_SSID, WIFI_PASSWORD).await {
             Ok(_) => {
                 info!("WiFi joined");
                 break;
             }
             Err(e) => {
-                warn!("WiFi join failed: {:?} — retrying in 5s", e);
+                let _ = e;
+                warn!("WiFi join failed — retrying in 5s");
                 Timer::after(Duration::from_secs(5)).await;
             }
         }
@@ -66,6 +65,8 @@ pub async fn join(control: &mut cyw43::Control<'static>) {
 }
 
 #[embassy_executor::task]
-async fn cyw43_task(runner: cyw43::Runner<'static, Output<'static>, PioSpi<'static, PIO1, 0, DMA_CH0>>) -> ! {
+async fn cyw43_task(
+    runner: cyw43::Runner<'static, Output<'static>, PioSpi<'static, PIO1, 0, DMA_CH0>>,
+) -> ! {
     runner.run().await
 }

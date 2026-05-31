@@ -1,8 +1,8 @@
-// WiFi credentials
-pub const WIFI_SSID: &str = "your_wifi_ssid";
-pub const WIFI_PASSWORD: &str = "your_wifi_password";
+// WiFi credentials — fill in before flashing
+pub const WIFI_SSID: &str = "YOUR_WIFI_SSID";
+pub const WIFI_PASSWORD: &str = "YOUR_WIFI_PASSWORD";
 
-// MQTT broker
+// MQTT broker — set to your broker's LAN IP
 pub const MQTT_BROKER_IP: [u8; 4] = [192, 168, 1, 100];
 pub const MQTT_PORT: u16 = 1883;
 pub const MQTT_CLIENT_ID: &str = "galactic_unicorn";

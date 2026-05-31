@@ -1,22 +1,17 @@
 /// Galactic Unicorn 53×11 LED matrix driver.
 ///
 /// Hardware: shift-register chain driven by PIO.
-/// GPIO assignments (Pimoroni schematic):
-///   DATA  = GPIO 8
-///   CLOCK = GPIO 9
-///   LATCH = GPIO 10
-///   BLANK = GPIO 11
-///   Row select: GPIO 22, 21, 20, 19 (4-bit binary)
+/// GPIO assignments (from Pimoroni galactic_unicorn.cpp):
+///   CLK   = GPIO 13
+///   DATA  = GPIO 14
+///   LATCH = GPIO 15
+///   BLANK = GPIO 16
+///   ROW0  = GPIO 17, ROW1 = GPIO 18, ROW2 = GPIO 19, ROW3 = GPIO 20
 ///
 /// Each row is serialised as 53 × 3 bytes (R,G,B) into the shift registers,
 /// then latched.  The PIO program handles the bit-banging at a fixed frequency
 /// so the CPU just writes words into the FIFO.
 
-use embassy_rp::peripherals::PIO0;
-use embassy_rp::pio::{Instance, Pio, StateMachine};
-use embassy_rp::gpio::{Level, Output};
-use embassy_rp::peripherals::{PIN_8, PIN_9, PIN_10, PIN_11, PIN_19, PIN_20, PIN_21, PIN_22};
-use embassy_time::{Duration, Timer};
 
 pub const WIDTH: usize = 53;
 pub const HEIGHT: usize = 11;
