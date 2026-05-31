@@ -48,17 +48,19 @@ change, update `src/config.example.rs` too.
 
 ## Build & flash
 
-The on-board debug header is broken, so flash over USB in BOOTSEL mode (not probe-rs):
+The on-board debug header is broken, so flash over USB in BOOTSEL mode (not probe-rs).
+The cargo runner is set to `elf2uf2-rs -d`, so flashing is one step:
 
 ```sh
-cargo build --release
 # Hold BOOTSEL and plug in the board → it mounts as RPI-RP2.
-elf2uf2-rs target/thumbv6m-none-eabi/release/unicorn-display /tmp/unicorn.uf2
-cp /tmp/unicorn.uf2 /Volumes/RPI-RP2/   # board reflashes and reboots automatically
+cargo run --release   # builds, converts to UF2, deploys; board reboots into firmware
 ```
 
-> The `runner` in `.cargo/config.toml` still points at `probe-rs run`, which only
-> works with a debug probe. With no probe, ignore `cargo run` and use the steps above.
+> The firmware exposes no USB reset interface, so there is no auto-reboot into
+> BOOTSEL — manually enter BOOTSEL before each flash. If the board is not in
+> BOOTSEL, `elf2uf2-rs` exits with "Unable to find mounted pico".
+>
+> Manual fallback (equivalent): `elf2uf2-rs target/thumbv6m-none-eabi/release/unicorn-display /tmp/unicorn.uf2 && cp /tmp/unicorn.uf2 /Volumes/RPI-RP2/`
 
 **Boot indicator:** on boot the whole panel flashes white for ~2 s (before WiFi).
 If you see it, the boot2 loader and PIO display driver are working; a still-blank
