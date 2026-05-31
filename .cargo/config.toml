@@ -1,5 +1,7 @@
 [target.thumbv6m-none-eabi]
-runner = "probe-rs run --chip RP2040"
+# No debug probe — flash via UF2 over USB. Put the board in BOOTSEL mode
+# (mounts as RPI-RP2) before `cargo run --release`; -d deploys to it.
+runner = "elf2uf2-rs -d"
 rustflags = [
     "-C", "linker=flip-link",
     "-C", "link-arg=--nmagic",
