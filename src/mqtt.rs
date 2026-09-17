@@ -7,6 +7,7 @@
 ///   - PINGREQ / PINGRESP keepalive
 
 use defmt::{info, warn};
+use embassy_futures::select::{select, Either};
 use embassy_net::tcp::TcpSocket;
 use embassy_net::Stack;
 use embassy_time::{Duration, Timer};
@@ -14,6 +15,12 @@ use heapless::String;
 
 use crate::config::{MQTT_BROKER_IP, MQTT_CLIENT_ID, MQTT_PORT, TOPICS};
 use crate::wifi::NetDriver;
+
+/// Keepalive advertised to the broker in CONNECT (seconds).
+const KEEPALIVE_SECS: u16 = 60;
+/// How often we send PINGREQ. Must be well under KEEPALIVE_SECS, and under the
+/// socket's own idle timeout, or the link goes quiet and gets torn down.
+const PING_INTERVAL_SECS: u64 = 20;
 
 /// A received MQTT message (topic index into TOPICS + payload string).
 #[derive(Clone)]
@@ -67,12 +74,45 @@ pub async fn run(
         }
         info!("MQTT subscribed to {} topics", TOPICS.len());
 
-        // Poll loop
+        // Poll loop.
+        //
+        // The ping timer races only the wait for a packet's *first* byte, never
+        // a partially-read packet: dropping a half-finished read would leave
+        // bytes consumed from the stream and desync every packet after it.
         loop {
-            match recv_packet(&mut socket).await {
+            let mut type_byte = [0u8; 1];
+            let got_byte = match select(
+                read_exact(&mut socket, &mut type_byte),
+                Timer::after(Duration::from_secs(PING_INTERVAL_SECS)),
+            )
+            .await
+            {
+                Either::First(Ok(())) => true,
+                Either::First(Err(_)) => {
+                    warn!("MQTT recv error — reconnecting");
+                    break;
+                }
+                Either::Second(_) => false,
+            };
+
+            if !got_byte {
+                // Idle: keep the connection alive.
+                if write_all(&mut socket, &[0xC0, 0x00]).await.is_err() {
+                    warn!("MQTT PINGREQ failed — reconnecting");
+                    break;
+                }
+                continue;
+            }
+
+            match recv_packet(&mut socket, type_byte[0]).await {
                 Ok(PacketType::Publish { topic, payload }) => {
                     if let Some(idx) = TOPICS.iter().position(|(t, _, _)| *t == topic.as_str()) {
-                        let _ = sender.try_send(Message { topic_idx: idx, payload });
+                        info!("MQTT publish on topic index {}", idx);
+                        if sender.try_send(Message { topic_idx: idx, payload }).is_err() {
+                            warn!("display channel full — message dropped");
+                        }
+                    } else {
+                        warn!("MQTT publish on unknown topic");
                     }
                 }
                 Ok(PacketType::PingReq) => {
@@ -119,8 +159,8 @@ async fn connect(socket: &mut TcpSocket<'_>, client_id: &str) -> Result<(), ()> 
     buf[pos] = 4; pos += 1;
     // Connect flags: clean session
     buf[pos] = 0x02; pos += 1;
-    // Keepalive: 60s
-    buf[pos] = 0x00; buf[pos+1] = 60; pos += 2;
+    // Keepalive
+    buf[pos] = (KEEPALIVE_SECS >> 8) as u8; buf[pos+1] = KEEPALIVE_SECS as u8; pos += 2;
     // Client ID
     let id_bytes = client_id.as_bytes();
     buf[pos] = 0x00; buf[pos+1] = id_bytes.len() as u8; pos += 2;
@@ -184,12 +224,13 @@ async fn subscribe(socket: &mut TcpSocket<'_>, topics: &heapless::Vec<(&str, u8)
 // Receive one MQTT packet (minimal: PUBLISH QoS 0, PINGREQ, PINGRESP)
 // ---------------------------------------------------------------------------
 
-async fn recv_packet(socket: &mut TcpSocket<'_>) -> Result<PacketType, ()> {
-    let mut fixed = [0u8; 2];
-    read_exact(socket, &mut fixed).await?;
+/// `type_byte` is the packet's already-consumed first byte.
+async fn recv_packet(socket: &mut TcpSocket<'_>, type_byte: u8) -> Result<PacketType, ()> {
+    let mut len_byte = [0u8; 1];
+    read_exact(socket, &mut len_byte).await?;
 
-    let ptype = fixed[0] & 0xF0;
-    let remaining = decode_varlen(socket, fixed[1]).await?;
+    let ptype = type_byte & 0xF0;
+    let remaining = decode_varlen(socket, len_byte[0]).await?;
 
     match ptype {
         0x30 => {

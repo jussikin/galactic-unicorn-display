@@ -26,3 +26,4 @@ pub const TOPICS: &[(&str, &str, (u8, u8, u8))] = &[
 pub const BRIGHTNESS: f32 = 0.4; // 0.0 – 1.0
 pub const SCROLL_STEP_MS: u64 = 40; // ms per pixel shift
 pub const SCROLL_PAUSE_MS: u64 = 1000; // pause at ends
+pub const TOPIC_HOLD_MS: u64 = 4000; // how long a non-scrolling topic stays on screen

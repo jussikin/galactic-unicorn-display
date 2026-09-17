@@ -22,8 +22,8 @@ mod mqtt;
 mod pio_display;
 mod wifi;
 
-use config::{BRIGHTNESS, SCROLL_PAUSE_MS, SCROLL_STEP_MS, TOPICS};
-use display::{Display, HEIGHT, WIDTH};
+use config::{BRIGHTNESS, SCROLL_PAUSE_MS, SCROLL_STEP_MS, TOPICS, TOPIC_HOLD_MS};
+use display::{Display, FONT_HEIGHT, HEIGHT, WIDTH};
 use mqtt::Message;
 use pio_display::PioDisplay;
 
@@ -31,6 +31,10 @@ bind_interrupts!(struct Irqs {
     USBCTRL_IRQ => UsbInterruptHandler<USB>;
     PIO0_IRQ_0  => PioInterruptHandler<PIO0>;
 });
+
+/// Vertical offset for drawn text. The 5×11 font fills the panel, so this is 0;
+/// it stays computed so a shorter font would still be centred.
+const TEXT_Y: i32 = (HEIGHT as i32 - FONT_HEIGHT as i32) / 2;
 
 // Channel from MQTT task → display task (capacity 4)
 static CHANNEL: Channel<CriticalSectionRawMutex, Message, 4> = Channel::new();
@@ -119,6 +123,42 @@ async fn mqtt_task(stack: &'static Stack<wifi::NetDriver>) -> ! {
     mqtt::run(stack, CHANNEL.sender()).await
 }
 
+/// Drain the MQTT channel into `values`.
+/// Returns a bitmask of the topic indices whose value changed.
+fn drain_messages(values: &mut [Option<String<128>>; 8]) -> u8 {
+    let mut updated = 0u8;
+    while let Ok(msg) = CHANNEL.try_receive() {
+        if msg.topic_idx < values.len() {
+            values[msg.topic_idx] = Some(msg.payload);
+            updated |= 1 << msg.topic_idx;
+        }
+    }
+    updated
+}
+
+/// Show `frame` for `ms`, draining the channel as we go.
+/// Returns early (true) as soon as `topic_idx`'s value is updated, so a fresh
+/// value replaces the one on screen instead of waiting out the full duration.
+async fn show_while_draining(
+    driver: &mut PioDisplay<'_>,
+    disp: &Display,
+    ms: u64,
+    topic_idx: usize,
+    values: &mut [Option<String<128>>; 8],
+) -> bool {
+    let frame = disp.frame();
+    let mut left = ms;
+    while left > 0 {
+        let chunk = left.min(50);
+        driver.flush_for_ms(&frame, chunk).await;
+        left -= chunk;
+        if drain_messages(values) & (1 << topic_idx) != 0 {
+            return true;
+        }
+    }
+    false
+}
+
 /// Main display loop: shows scrolling text for each received MQTT message.
 async fn display_loop(driver: &mut PioDisplay<'_>) -> ! {
     let mut disp = Display::new(BRIGHTNESS);
@@ -128,12 +168,7 @@ async fn display_loop(driver: &mut PioDisplay<'_>) -> ! {
     let mut current_topic: usize = 0;
 
     loop {
-        // Drain any new messages
-        while let Ok(msg) = CHANNEL.try_receive() {
-            if msg.topic_idx < values.len() {
-                values[msg.topic_idx] = Some(msg.payload);
-            }
-        }
+        drain_messages(&mut values);
 
         // Build display string for current topic
         let (_, label, (r, g, b)) = TOPICS[current_topic];
@@ -149,24 +184,38 @@ async fn display_loop(driver: &mut PioDisplay<'_>) -> ! {
 
         let total_px = Display::measure_str(&text);
 
-        if total_px > WIDTH as i32 {
-            scroll_text(driver, &mut disp, &text, r, g, b).await;
+        let interrupted = if total_px > WIDTH as i32 {
+            scroll_text(driver, &mut disp, &text, r, g, b, current_topic, &mut values).await
         } else {
-            // Center vertically (font 7px tall, display 11px)
-            let y = (HEIGHT as i32 - 7) / 2;
+            let y = TEXT_Y;
             disp.clear();
             disp.draw_str(0, y, &text, r, g, b);
-            driver.flush_for_ms(&disp.frame(), 2000).await;
-        }
+            show_while_draining(driver, &disp, TOPIC_HOLD_MS, current_topic, &mut values).await
+        };
 
-        current_topic = (current_topic + 1) % TOPICS.len();
+        // If the current topic just got a new value, redraw it instead of
+        // moving on — otherwise the update would not be seen until the next
+        // full rotation through the topic list.
+        if !interrupted {
+            current_topic = (current_topic + 1) % TOPICS.len();
+        }
     }
 }
 
 /// Scroll `text` across the display from right to left.
-async fn scroll_text(driver: &mut PioDisplay<'_>, disp: &mut Display, text: &str, r: u8, g: u8, b: u8) {
+/// Returns true if `topic_idx` received a new value and the scroll was aborted.
+async fn scroll_text(
+    driver: &mut PioDisplay<'_>,
+    disp: &mut Display,
+    text: &str,
+    r: u8,
+    g: u8,
+    b: u8,
+    topic_idx: usize,
+    values: &mut [Option<String<128>>; 8],
+) -> bool {
     let total_px = Display::measure_str(text);
-    let y = (HEIGHT as i32 - 7) / 2;
+    let y = TEXT_Y;
 
     let start_x = WIDTH as i32;
     let end_x   = -total_px;
@@ -174,17 +223,22 @@ async fn scroll_text(driver: &mut PioDisplay<'_>, disp: &mut Display, text: &str
     // Initial pause with text visible at start position
     disp.clear();
     disp.draw_str(start_x, y, text, r, g, b);
-    driver.flush_for_ms(&disp.frame(), SCROLL_PAUSE_MS).await;
+    if show_while_draining(driver, disp, SCROLL_PAUSE_MS, topic_idx, values).await {
+        return true;
+    }
 
     let mut x = start_x;
     while x >= end_x {
-        let _ = CHANNEL.try_receive();
         disp.clear();
         disp.draw_str(x, y, text, r, g, b);
-        driver.flush_for_ms(&disp.frame(), SCROLL_STEP_MS).await;
+        let frame = disp.frame();
+        driver.flush_for_ms(&frame, SCROLL_STEP_MS).await;
+        if drain_messages(values) & (1 << topic_idx) != 0 {
+            return true;
+        }
         x -= 1;
     }
 
     disp.clear();
-    driver.flush_for_ms(&disp.frame(), SCROLL_PAUSE_MS).await;
+    show_while_draining(driver, disp, SCROLL_PAUSE_MS, topic_idx, values).await
 }
