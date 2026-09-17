@@ -120,7 +120,11 @@ fn font_glyph(ch: char) -> [u8; FONT_HEIGHT] {
 }
 
 // 5×11 font — 95 printable characters starting at space (0x20).
-// Generated from ASCII-art glyph sources; rows top-to-bottom, bits left-to-right in bit4..bit0.
+// Rows top-to-bottom, bits left-to-right in bit4..bit0.
+//
+// GENERATED — do not hand-edit. The glyphs are maintained as ASCII art in
+// tools/genfont.py; edit them there and run `python3 tools/genfont.py --write`
+// to regenerate this table (`--preview` renders sample strings first).
 #[rustfmt::skip]
 static FONT: [[u8; FONT_HEIGHT]; 95] = [
 /* ' '   */ [0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00],
