@@ -23,7 +23,7 @@ mod pio_display;
 mod wifi;
 
 use config::{BRIGHTNESS, SCROLL_PAUSE_MS, SCROLL_STEP_MS, TOPICS, TOPIC_HOLD_MS};
-use display::{Display, FONT_HEIGHT, HEIGHT, WIDTH};
+use display::{Display, WIDTH};
 use mqtt::Message;
 use pio_display::PioDisplay;
 
@@ -31,10 +31,6 @@ bind_interrupts!(struct Irqs {
     USBCTRL_IRQ => UsbInterruptHandler<USB>;
     PIO0_IRQ_0  => PioInterruptHandler<PIO0>;
 });
-
-/// Vertical offset for drawn text. The 5×11 font fills the panel, so this is 0;
-/// it stays computed so a shorter font would still be centred.
-const TEXT_Y: i32 = (HEIGHT as i32 - FONT_HEIGHT as i32) / 2;
 
 // Channel from MQTT task → display task (capacity 4)
 static CHANNEL: Channel<CriticalSectionRawMutex, Message, 4> = Channel::new();
@@ -182,14 +178,13 @@ async fn display_loop(driver: &mut PioDisplay<'_>) -> ! {
         }
         let _ = text.push_str(value);
 
-        let total_px = Display::measure_str(&text);
+        let total_px = Display::measure_markup(&text);
 
         let interrupted = if total_px > WIDTH as i32 {
             scroll_text(driver, &mut disp, &text, r, g, b, current_topic, &mut values).await
         } else {
-            let y = TEXT_Y;
             disp.clear();
-            disp.draw_str(0, y, &text, r, g, b);
+            disp.draw_markup(0, &text, (r, g, b));
             show_while_draining(driver, &disp, TOPIC_HOLD_MS, current_topic, &mut values).await
         };
 
@@ -214,15 +209,14 @@ async fn scroll_text(
     topic_idx: usize,
     values: &mut [Option<String<128>>; 8],
 ) -> bool {
-    let total_px = Display::measure_str(text);
-    let y = TEXT_Y;
+    let total_px = Display::measure_markup(text);
 
     let start_x = WIDTH as i32;
     let end_x   = -total_px;
 
     // Initial pause with text visible at start position
     disp.clear();
-    disp.draw_str(start_x, y, text, r, g, b);
+    disp.draw_markup(start_x, text, (r, g, b));
     if show_while_draining(driver, disp, SCROLL_PAUSE_MS, topic_idx, values).await {
         return true;
     }
@@ -230,7 +224,7 @@ async fn scroll_text(
     let mut x = start_x;
     while x >= end_x {
         disp.clear();
-        disp.draw_str(x, y, text, r, g, b);
+        disp.draw_markup(x, text, (r, g, b));
         let frame = disp.frame();
         driver.flush_for_ms(&frame, SCROLL_STEP_MS).await;
         if drain_messages(values) & (1 << topic_idx) != 0 {

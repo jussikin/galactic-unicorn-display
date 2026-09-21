@@ -12,15 +12,79 @@
 /// then latched.  The PIO program handles the bit-banging at a fixed frequency
 /// so the CPU just writes words into the FIFO.
 
+use heapless::String;
 
 pub const WIDTH: usize = 53;
 pub const HEIGHT: usize = 11;
 
-/// Glyph box height. The font fills the panel edge to edge — uppercase and
-/// digits span all 11 rows, so there is no vertical margin to centre within.
-pub const FONT_HEIGHT: usize = 11;
-/// Horizontal advance per character: 5px glyph + 1px gap.
-pub const CHAR_ADVANCE: i32 = 6;
+/// The big font fills the panel edge to edge.
+pub const FONT_BIG_HEIGHT: usize = 11;
+/// The small font is the original 5×7, drawn centred in the 11 rows.
+pub const FONT_SMALL_HEIGHT: usize = 7;
+/// Blank columns left after each glyph.
+const LETTER_GAP: i32 = 1;
+/// Advance for a glyph with no ink at all (space), including the gap.
+const SPACE_ADVANCE: i32 = 3;
+
+/// Longest tag body accepted between braces, e.g. "magenta" or "#ff8800".
+const MAX_TAG: usize = 16;
+
+/// Colours addressable by name in markup. Values are tuned for LEDs rather
+/// than being mathematically pure — a pure blue reads as almost black on this
+/// panel, so `blue` carries some green.
+const COLORS: &[(&str, &str, (u8, u8, u8))] = &[
+    ("red",     "r", (255,   0,   0)),
+    ("green",   "g", (  0, 255,   0)),
+    ("blue",    "b", (  0,  80, 255)),
+    ("white",   "w", (255, 255, 255)),
+    ("yellow",  "y", (255, 200,   0)),
+    ("cyan",    "c", (  0, 255, 255)),
+    ("magenta", "m", (255,   0, 255)),
+    ("orange",  "o", (255, 110,   0)),
+];
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Size {
+    Big,
+    Small,
+}
+
+impl Size {
+    /// Rows of blank space above the glyph, so a small glyph sits centred in
+    /// the panel rather than hugging the top.
+    fn top_offset(self) -> i32 {
+        match self {
+            Size::Big => 0,
+            Size::Small => ((HEIGHT - FONT_SMALL_HEIGHT) / 2) as i32,
+        }
+    }
+
+    /// Advance for one character in this size, gap included.
+    fn advance(self, ch: char) -> i32 {
+        glyph_metrics(self.rows(ch)).1
+    }
+
+    fn rows(self, ch: char) -> &'static [u8] {
+        let i = glyph_index(ch);
+        match self {
+            Size::Big => &FONT_BIG[i],
+            Size::Small => &FONT_SMALL[i],
+        }
+    }
+}
+
+/// Drawing state that markup tags mutate as a string is rendered.
+#[derive(Clone, Copy)]
+pub struct Style {
+    pub color: (u8, u8, u8),
+    pub size: Size,
+}
+
+impl Style {
+    pub fn new(color: (u8, u8, u8)) -> Self {
+        Self { color, size: Size::Big }
+    }
+}
 
 pub struct Display {
     // Frame buffer: [row][col] = (r, g, b)
@@ -51,36 +115,47 @@ impl Display {
         }
     }
 
-    /// Draw a single ASCII character using the 5×11 bitmap font.
-    /// Returns the x-advance (pixels consumed).
-    pub fn draw_char(&mut self, x: i32, y: i32, ch: char, r: u8, g: u8, b: u8) -> i32 {
-        let glyph = font_glyph(ch);
-        for (row, bits) in glyph.iter().enumerate() {
+    /// Draw one ASCII character in the given style. Returns the x-advance.
+    ///
+    /// Spacing is proportional: the glyph is shifted left so its first inked
+    /// column lands on `x`, and the advance covers only the inked columns plus
+    /// the gap. A narrow character like ':' or '.' therefore takes 3px where a
+    /// full-width one takes 6.
+    pub fn draw_char(&mut self, x: i32, ch: char, style: Style) -> i32 {
+        let (r, g, b) = style.color;
+        let top = style.size.top_offset();
+        let rows = style.size.rows(ch);
+        let (left, advance) = glyph_metrics(rows);
+        for (row, bits) in rows.iter().enumerate() {
             for col in 0..5usize {
                 if bits & (1 << (4 - col)) != 0 {
-                    let px = x + col as i32;
-                    let py = y + row as i32;
+                    let px = x + col as i32 - left;
+                    let py = top + row as i32;
                     if px >= 0 && px < WIDTH as i32 && py >= 0 && py < HEIGHT as i32 {
                         self.set_pixel(px as usize, py as usize, r, g, b);
                     }
                 }
             }
         }
-        CHAR_ADVANCE
+        advance
     }
 
-    /// Draw a string, returns total pixel width.
-    pub fn draw_str(&mut self, x: i32, y: i32, s: &str, r: u8, g: u8, b: u8) -> i32 {
+    /// Draw a string with markup (see `walk_markup`). `default` is the colour
+    /// the text starts in and what `{reset}` returns to. Returns pixel width.
+    pub fn draw_markup(&mut self, x: i32, text: &str, default: (u8, u8, u8)) -> i32 {
         let mut cx = x;
-        for ch in s.chars() {
-            cx += self.draw_char(cx, y, ch, r, g, b);
-        }
+        walk_markup(text, Style::new(default), |ch, style| {
+            cx += self.draw_char(cx, ch, style);
+        });
         cx - x
     }
 
-    /// Measure a string width in pixels without drawing.
-    pub fn measure_str(s: &str) -> i32 {
-        s.len() as i32 * CHAR_ADVANCE
+    /// Width in pixels of `text` once markup is stripped. Must agree with
+    /// `draw_markup` or the scroll decision is made on the wrong width.
+    pub fn measure_markup(text: &str) -> i32 {
+        let mut w = 0;
+        walk_markup(text, Style::new((0, 0, 0)), |ch, style| w += style.size.advance(ch));
+        w
     }
 
     /// Apply brightness scaling and return the raw buffer (consumed by the PIO driver).
@@ -102,31 +177,172 @@ impl Display {
 }
 
 // ---------------------------------------------------------------------------
-// 5×11 ASCII bitmap font (printable ASCII 0x20–0x7e)
-// Each entry is 11 bytes; each byte is a 5-bit row (MSB = leftmost pixel).
-//
-// Uppercase and digits use the full 11-row box (no margin — the panel edge is
-// the margin). Lowercase sits on an x-height of rows 4..10; the descenders
-// g j p q y keep a shorter 5-row bowl (rows 4..8) so their tail fits on rows
-// 9..10 rather than falling off the bottom of the panel.
+// Markup
 // ---------------------------------------------------------------------------
 
-fn font_glyph(ch: char) -> [u8; FONT_HEIGHT] {
-    let idx = ch as usize;
-    if idx < 0x20 || idx > 0x7e {
-        return FONT[0]; // space
+/// Walk `text`, calling `emit(char, style)` for every character that should be
+/// drawn, with tags applied to the style instead of being drawn.
+///
+/// Tags are `{name}`; each colour and size also has a one-letter alias:
+///
+///   {red} {r}  {green} {g}  {blue} {b}  {white} {w}
+///   {yellow} {y}  {cyan} {c}  {magenta} {m}  {orange} {o}
+///   {#ff8800}   arbitrary RGB hex
+///   {big} {B}   11px font        {small} {S}   7px font
+///   {reset}     back to the topic's own colour, big font
+///   {{          a literal '{'
+///
+/// An unrecognised or unterminated tag is emitted as literal text rather than
+/// silently swallowed, so a typo is visible on the panel instead of making
+/// part of the message disappear.
+fn walk_markup<F: FnMut(char, Style)>(text: &str, default: Style, mut emit: F) {
+    let mut style = default;
+    let mut it = text.chars();
+
+    while let Some(ch) = it.next() {
+        if ch != '{' {
+            emit(ch, style);
+            continue;
+        }
+
+        // Buffer the tag body so an unrecognised tag can be replayed as text:
+        // the iterator cannot be rewound.
+        let mut tag: String<MAX_TAG> = String::new();
+        let mut closed = false;
+        let mut escaped = false;
+        // The character that overflowed the buffer, kept so it is replayed
+        // rather than swallowed when the tag turns out to be too long.
+        let mut overflow = None;
+
+        loop {
+            match it.next() {
+                Some('{') if tag.is_empty() => {
+                    escaped = true; // "{{" is a literal brace
+                    break;
+                }
+                Some('}') => {
+                    closed = true;
+                    break;
+                }
+                Some(c) => {
+                    if tag.push(c).is_err() {
+                        overflow = Some(c); // too long to be a tag
+                        break;
+                    }
+                }
+                None => break,
+            }
+        }
+
+        if escaped {
+            emit('{', style);
+            continue;
+        }
+
+        if closed {
+            if let Some(next) = apply_tag(tag.as_str(), style, default) {
+                style = next;
+                continue;
+            }
+        }
+
+        // Not a tag we know — draw what we consumed.
+        emit('{', style);
+        for c in tag.chars() {
+            emit(c, style);
+        }
+        if closed {
+            emit('}', style);
+        }
+        if let Some(c) = overflow {
+            emit(c, style);
+        }
     }
-    FONT[idx - 0x20]
 }
 
-// 5×11 font — 95 printable characters starting at space (0x20).
-// Rows top-to-bottom, bits left-to-right in bit4..bit0.
+/// Resolve a tag body to a new style, or None if it is not a known tag.
+fn apply_tag(tag: &str, current: Style, default: Style) -> Option<Style> {
+    match tag {
+        "reset" => return Some(default),
+        "big" | "B" => return Some(Style { size: Size::Big, ..current }),
+        "small" | "S" => return Some(Style { size: Size::Small, ..current }),
+        _ => {}
+    }
+
+    for (name, alias, rgb) in COLORS {
+        if tag == *name || tag == *alias {
+            return Some(Style { color: *rgb, ..current });
+        }
+    }
+
+    parse_hex(tag).map(|rgb| Style { color: rgb, ..current })
+}
+
+/// Parse "#rrggbb" into a colour.
+fn parse_hex(tag: &str) -> Option<(u8, u8, u8)> {
+    let bytes = tag.as_bytes();
+    if bytes.len() != 7 || bytes[0] != b'#' {
+        return None;
+    }
+    let mut out = [0u8; 3];
+    for (i, slot) in out.iter_mut().enumerate() {
+        let hi = hex_digit(bytes[1 + i * 2])?;
+        let lo = hex_digit(bytes[2 + i * 2])?;
+        *slot = hi << 4 | lo;
+    }
+    Some((out[0], out[1], out[2]))
+}
+
+fn hex_digit(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Fonts (printable ASCII 0x20–0x7e)
+// Each entry is one glyph; each byte is a 5-bit row (MSB = leftmost pixel).
 //
 // GENERATED — do not hand-edit. The glyphs are maintained as ASCII art in
 // tools/genfont.py; edit them there and run `python3 tools/genfont.py --write`
-// to regenerate this table (`--preview` renders sample strings first).
+// to regenerate these tables (`--preview` renders sample strings first).
+// ---------------------------------------------------------------------------
+
+/// Ink bounds of a glyph: (leftmost inked column, advance including the gap).
+///
+/// Derived from the bitmap rather than kept in a table so the spacing can
+/// never drift out of step with the glyphs — `draw_char` and `measure_markup`
+/// both go through here, and if they disagreed the scroll decision would be
+/// made on the wrong width.
+fn glyph_metrics(rows: &[u8]) -> (i32, i32) {
+    let mut mask = 0u8;
+    for r in rows {
+        mask |= r;
+    }
+    if mask == 0 {
+        return (0, SPACE_ADVANCE);
+    }
+    // Only bits 4..0 are used, bit4 being the leftmost column.
+    let left = mask.leading_zeros() as i32 - 3;
+    let right = 4 - mask.trailing_zeros() as i32;
+    (left, right - left + 1 + LETTER_GAP)
+}
+
+/// Index into the font tables; anything outside printable ASCII becomes space.
+fn glyph_index(ch: char) -> usize {
+    let idx = ch as usize;
+    if idx < 0x20 || idx > 0x7e {
+        0
+    } else {
+        idx - 0x20
+    }
+}
+
 #[rustfmt::skip]
-static FONT: [[u8; FONT_HEIGHT]; 95] = [
+static FONT_BIG: [[u8; FONT_BIG_HEIGHT]; 95] = [
 /* ' '   */ [0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00],
 /* '!'   */ [0x04,0x04,0x04,0x04,0x04,0x04,0x04,0x04,0x00,0x04,0x04],
 /* '"'   */ [0x0A,0x0A,0x0A,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00],
@@ -140,7 +356,7 @@ static FONT: [[u8; FONT_HEIGHT]; 95] = [
 /* '*'   */ [0x00,0x00,0x04,0x15,0x0E,0x04,0x0E,0x15,0x04,0x00,0x00],
 /* '+'   */ [0x00,0x00,0x00,0x04,0x04,0x1F,0x04,0x04,0x00,0x00,0x00],
 /* ','   */ [0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x0C,0x08],
-/* '-'   */ [0x00,0x00,0x00,0x00,0x00,0x1F,0x00,0x00,0x00,0x00,0x00],
+/* '-'   */ [0x00,0x00,0x00,0x00,0x00,0x0E,0x00,0x00,0x00,0x00,0x00],
 /* '.'   */ [0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x0C,0x0C],
 /* '/'   */ [0x01,0x01,0x02,0x02,0x04,0x04,0x04,0x08,0x08,0x10,0x10],
 /* '0'   */ [0x0E,0x11,0x11,0x13,0x15,0x15,0x15,0x19,0x11,0x11,0x0E],
@@ -222,4 +438,103 @@ static FONT: [[u8; FONT_HEIGHT]; 95] = [
 /* '|'   */ [0x04,0x04,0x04,0x04,0x04,0x04,0x04,0x04,0x04,0x04,0x04],
 /* '}'   */ [0x0C,0x02,0x02,0x02,0x02,0x03,0x02,0x02,0x02,0x02,0x0C],
 /* '~'   */ [0x00,0x00,0x00,0x00,0x08,0x15,0x02,0x00,0x00,0x00,0x00],
+];
+
+#[rustfmt::skip]
+static FONT_SMALL: [[u8; FONT_SMALL_HEIGHT]; 95] = [
+/* ' '   */ [0x00,0x00,0x00,0x00,0x00,0x00,0x00],
+/* '!'   */ [0x04,0x04,0x04,0x04,0x00,0x00,0x04],
+/* '"'   */ [0x0A,0x0A,0x00,0x00,0x00,0x00,0x00],
+/* '#'   */ [0x0A,0x1F,0x0A,0x0A,0x1F,0x0A,0x00],
+/* '$'   */ [0x04,0x0F,0x14,0x0E,0x05,0x1E,0x04],
+/* '%'   */ [0x18,0x19,0x02,0x04,0x08,0x13,0x03],
+/* '&'   */ [0x0C,0x12,0x14,0x08,0x15,0x12,0x0D],
+/* '\''  */ [0x04,0x04,0x00,0x00,0x00,0x00,0x00],
+/* '('   */ [0x02,0x04,0x08,0x08,0x08,0x04,0x02],
+/* ')'   */ [0x08,0x04,0x02,0x02,0x02,0x04,0x08],
+/* '*'   */ [0x00,0x04,0x15,0x0E,0x15,0x04,0x00],
+/* '+'   */ [0x00,0x04,0x04,0x1F,0x04,0x04,0x00],
+/* ','   */ [0x00,0x00,0x00,0x00,0x06,0x04,0x08],
+/* '-'   */ [0x00,0x00,0x00,0x0E,0x00,0x00,0x00],
+/* '.'   */ [0x00,0x00,0x00,0x00,0x00,0x06,0x06],
+/* '/'   */ [0x00,0x01,0x02,0x04,0x08,0x10,0x00],
+/* '0'   */ [0x0E,0x11,0x13,0x15,0x19,0x11,0x0E],
+/* '1'   */ [0x04,0x0C,0x04,0x04,0x04,0x04,0x0E],
+/* '2'   */ [0x0E,0x11,0x01,0x02,0x04,0x08,0x1F],
+/* '3'   */ [0x1F,0x02,0x04,0x02,0x01,0x11,0x0E],
+/* '4'   */ [0x02,0x06,0x0A,0x12,0x1F,0x02,0x02],
+/* '5'   */ [0x1F,0x10,0x1E,0x01,0x01,0x11,0x0E],
+/* '6'   */ [0x06,0x08,0x10,0x1E,0x11,0x11,0x0E],
+/* '7'   */ [0x1F,0x01,0x02,0x04,0x08,0x08,0x08],
+/* '8'   */ [0x0E,0x11,0x11,0x0E,0x11,0x11,0x0E],
+/* '9'   */ [0x0E,0x11,0x11,0x0F,0x01,0x02,0x0C],
+/* ':'   */ [0x00,0x06,0x06,0x00,0x06,0x06,0x00],
+/* ';'   */ [0x00,0x06,0x06,0x00,0x06,0x04,0x08],
+/* '<'   */ [0x02,0x04,0x08,0x10,0x08,0x04,0x02],
+/* '='   */ [0x00,0x00,0x1F,0x00,0x1F,0x00,0x00],
+/* '>'   */ [0x08,0x04,0x02,0x01,0x02,0x04,0x08],
+/* '?'   */ [0x0E,0x11,0x01,0x02,0x04,0x00,0x04],
+/* '@'   */ [0x0E,0x11,0x01,0x0D,0x15,0x15,0x0E],
+/* 'A'   */ [0x0E,0x11,0x11,0x1F,0x11,0x11,0x11],
+/* 'B'   */ [0x1E,0x11,0x11,0x1E,0x11,0x11,0x1E],
+/* 'C'   */ [0x0E,0x11,0x10,0x10,0x10,0x11,0x0E],
+/* 'D'   */ [0x1E,0x09,0x11,0x11,0x11,0x09,0x1E],
+/* 'E'   */ [0x1F,0x10,0x10,0x1E,0x10,0x10,0x1F],
+/* 'F'   */ [0x1F,0x10,0x10,0x1E,0x10,0x10,0x10],
+/* 'G'   */ [0x0E,0x11,0x10,0x17,0x11,0x11,0x0F],
+/* 'H'   */ [0x11,0x11,0x11,0x1F,0x11,0x11,0x11],
+/* 'I'   */ [0x0E,0x04,0x04,0x04,0x04,0x04,0x0E],
+/* 'J'   */ [0x07,0x02,0x02,0x02,0x02,0x12,0x0C],
+/* 'K'   */ [0x11,0x12,0x14,0x18,0x14,0x12,0x11],
+/* 'L'   */ [0x10,0x10,0x10,0x10,0x10,0x10,0x1F],
+/* 'M'   */ [0x11,0x1B,0x15,0x11,0x11,0x11,0x11],
+/* 'N'   */ [0x11,0x11,0x19,0x15,0x13,0x11,0x11],
+/* 'O'   */ [0x0E,0x11,0x11,0x11,0x11,0x11,0x0E],
+/* 'P'   */ [0x1E,0x11,0x11,0x1E,0x10,0x10,0x10],
+/* 'Q'   */ [0x0E,0x11,0x11,0x11,0x15,0x12,0x0D],
+/* 'R'   */ [0x1E,0x11,0x11,0x1E,0x14,0x12,0x11],
+/* 'S'   */ [0x0F,0x10,0x10,0x0E,0x01,0x01,0x1E],
+/* 'T'   */ [0x1F,0x04,0x04,0x04,0x04,0x04,0x04],
+/* 'U'   */ [0x11,0x11,0x11,0x11,0x11,0x11,0x0E],
+/* 'V'   */ [0x11,0x11,0x11,0x11,0x11,0x0A,0x04],
+/* 'W'   */ [0x11,0x11,0x11,0x15,0x15,0x1B,0x11],
+/* 'X'   */ [0x11,0x11,0x0A,0x04,0x0A,0x11,0x11],
+/* 'Y'   */ [0x11,0x11,0x11,0x0A,0x04,0x04,0x04],
+/* 'Z'   */ [0x1F,0x01,0x02,0x04,0x08,0x10,0x1F],
+/* '['   */ [0x0E,0x08,0x08,0x08,0x08,0x08,0x0E],
+/* '\\'  */ [0x00,0x10,0x08,0x04,0x02,0x01,0x00],
+/* ']'   */ [0x0E,0x02,0x02,0x02,0x02,0x02,0x0E],
+/* '^'   */ [0x04,0x0A,0x11,0x00,0x00,0x00,0x00],
+/* '_'   */ [0x00,0x00,0x00,0x00,0x00,0x00,0x1F],
+/* '`'   */ [0x08,0x04,0x00,0x00,0x00,0x00,0x00],
+/* 'a'   */ [0x00,0x00,0x0E,0x01,0x0F,0x11,0x0F],
+/* 'b'   */ [0x10,0x10,0x1E,0x11,0x11,0x11,0x1E],
+/* 'c'   */ [0x00,0x00,0x0E,0x10,0x10,0x11,0x0E],
+/* 'd'   */ [0x01,0x01,0x0F,0x11,0x11,0x11,0x0F],
+/* 'e'   */ [0x00,0x00,0x0E,0x11,0x1F,0x10,0x0E],
+/* 'f'   */ [0x06,0x09,0x08,0x1C,0x08,0x08,0x08],
+/* 'g'   */ [0x00,0x0F,0x11,0x11,0x0F,0x01,0x0E],
+/* 'h'   */ [0x10,0x10,0x1E,0x11,0x11,0x11,0x11],
+/* 'i'   */ [0x04,0x00,0x0C,0x04,0x04,0x04,0x0E],
+/* 'j'   */ [0x02,0x00,0x06,0x02,0x02,0x12,0x0C],
+/* 'k'   */ [0x10,0x10,0x11,0x12,0x1C,0x12,0x11],
+/* 'l'   */ [0x0C,0x04,0x04,0x04,0x04,0x04,0x0E],
+/* 'm'   */ [0x00,0x00,0x1A,0x15,0x15,0x11,0x11],
+/* 'n'   */ [0x00,0x00,0x1E,0x11,0x11,0x11,0x11],
+/* 'o'   */ [0x00,0x00,0x0E,0x11,0x11,0x11,0x0E],
+/* 'p'   */ [0x00,0x1E,0x11,0x11,0x1E,0x10,0x10],
+/* 'q'   */ [0x00,0x0F,0x11,0x11,0x0F,0x01,0x01],
+/* 'r'   */ [0x00,0x00,0x16,0x19,0x10,0x10,0x10],
+/* 's'   */ [0x00,0x00,0x0E,0x10,0x0E,0x01,0x1E],
+/* 't'   */ [0x08,0x08,0x1C,0x08,0x08,0x09,0x06],
+/* 'u'   */ [0x00,0x00,0x11,0x11,0x11,0x11,0x0F],
+/* 'v'   */ [0x00,0x00,0x11,0x11,0x11,0x0A,0x04],
+/* 'w'   */ [0x00,0x00,0x11,0x11,0x15,0x15,0x0A],
+/* 'x'   */ [0x00,0x00,0x11,0x0A,0x04,0x0A,0x11],
+/* 'y'   */ [0x00,0x11,0x11,0x0F,0x01,0x11,0x0E],
+/* 'z'   */ [0x00,0x00,0x1F,0x02,0x04,0x08,0x1F],
+/* '{'   */ [0x02,0x04,0x04,0x08,0x04,0x04,0x02],
+/* '|'   */ [0x04,0x04,0x04,0x00,0x04,0x04,0x04],
+/* '}'   */ [0x08,0x04,0x04,0x02,0x04,0x04,0x08],
+/* '~'   */ [0x00,0x08,0x15,0x02,0x00,0x00,0x00],
 ];

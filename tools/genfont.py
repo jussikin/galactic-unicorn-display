@@ -1,14 +1,20 @@
 #!/usr/bin/env python3
-"""Generate the 5x11 bitmap font table in src/display.rs.
+"""Generate the bitmap font tables in src/display.rs.
+
+Two fonts: BIG is 5x11 and fills the panel; SMALL is 5x7 (the original font,
+kept for the {small} markup tag) and is drawn centred with 2 blank rows above
+and below. Glyphs are at most 5px wide but spacing is proportional: display.rs
+derives each advance from the inked columns, so ':' and '.' take 3px where 'M'
+takes 6. The preview below applies the same rule.
 
 The glyphs are kept as ASCII art here because that is the only form in which
-a bitmap font is reviewable by eye — the hex table in display.rs is generated
-output, not a source you should hand-edit.
+a bitmap font is reviewable by eye — the hex tables in display.rs are
+generated output, not a source you should hand-edit.
 
 Usage:
-    python3 tools/genfont.py            # print the Rust table to stdout
+    python3 tools/genfont.py            # print both Rust tables to stdout
     python3 tools/genfont.py --preview  # render sample strings as ASCII art
-    python3 tools/genfont.py --write    # rewrite the table in src/display.rs
+    python3 tools/genfont.py --write    # rewrite both tables in src/display.rs
 
 Layout: uppercase and digits fill all 11 rows (the panel edge is the margin).
 Lowercase sits on an x-height of rows 4..10. The descenders g j p q y keep a
@@ -199,7 +205,7 @@ g('-', """
 .....
 .....
 .....
-#####
+.###.
 .....
 .....
 .....
@@ -1260,10 +1266,881 @@ g('~', """
 .....
 """)
 
+
+# ---------------------------------------------------------------------------
+# SMALL: the original 5x7 font, used by the {small} markup tag.
+# ---------------------------------------------------------------------------
+
+S = {}
+def s(ch, art):
+    rows = art.strip("\n").split("\n")
+    assert len(rows) == 7, (ch, len(rows))
+    for r in rows:
+        assert len(r) == 5, (ch, r, len(r))
+    S[ch] = rows
+
+s(' ', """
+.....
+.....
+.....
+.....
+.....
+.....
+.....
+""")
+s('!', """
+..#..
+..#..
+..#..
+..#..
+.....
+.....
+..#..
+""")
+s('"', """
+.#.#.
+.#.#.
+.....
+.....
+.....
+.....
+.....
+""")
+s('#', """
+.#.#.
+#####
+.#.#.
+.#.#.
+#####
+.#.#.
+.....
+""")
+s('$', """
+..#..
+.####
+#.#..
+.###.
+..#.#
+####.
+..#..
+""")
+s('%', """
+##...
+##..#
+...#.
+..#..
+.#...
+#..##
+...##
+""")
+s('&', """
+.##..
+#..#.
+#.#..
+.#...
+#.#.#
+#..#.
+.##.#
+""")
+s('\'', """
+..#..
+..#..
+.....
+.....
+.....
+.....
+.....
+""")
+s('(', """
+...#.
+..#..
+.#...
+.#...
+.#...
+..#..
+...#.
+""")
+s(')', """
+.#...
+..#..
+...#.
+...#.
+...#.
+..#..
+.#...
+""")
+s('*', """
+.....
+..#..
+#.#.#
+.###.
+#.#.#
+..#..
+.....
+""")
+s('+', """
+.....
+..#..
+..#..
+#####
+..#..
+..#..
+.....
+""")
+s(',', """
+.....
+.....
+.....
+.....
+..##.
+..#..
+.#...
+""")
+s('-', """
+.....
+.....
+.....
+.###.
+.....
+.....
+.....
+""")
+s('.', """
+.....
+.....
+.....
+.....
+.....
+..##.
+..##.
+""")
+s('/', """
+.....
+....#
+...#.
+..#..
+.#...
+#....
+.....
+""")
+s('0', """
+.###.
+#...#
+#..##
+#.#.#
+##..#
+#...#
+.###.
+""")
+s('1', """
+..#..
+.##..
+..#..
+..#..
+..#..
+..#..
+.###.
+""")
+s('2', """
+.###.
+#...#
+....#
+...#.
+..#..
+.#...
+#####
+""")
+s('3', """
+#####
+...#.
+..#..
+...#.
+....#
+#...#
+.###.
+""")
+s('4', """
+...#.
+..##.
+.#.#.
+#..#.
+#####
+...#.
+...#.
+""")
+s('5', """
+#####
+#....
+####.
+....#
+....#
+#...#
+.###.
+""")
+s('6', """
+..##.
+.#...
+#....
+####.
+#...#
+#...#
+.###.
+""")
+s('7', """
+#####
+....#
+...#.
+..#..
+.#...
+.#...
+.#...
+""")
+s('8', """
+.###.
+#...#
+#...#
+.###.
+#...#
+#...#
+.###.
+""")
+s('9', """
+.###.
+#...#
+#...#
+.####
+....#
+...#.
+.##..
+""")
+s(':', """
+.....
+..##.
+..##.
+.....
+..##.
+..##.
+.....
+""")
+s(';', """
+.....
+..##.
+..##.
+.....
+..##.
+..#..
+.#...
+""")
+s('<', """
+...#.
+..#..
+.#...
+#....
+.#...
+..#..
+...#.
+""")
+s('=', """
+.....
+.....
+#####
+.....
+#####
+.....
+.....
+""")
+s('>', """
+.#...
+..#..
+...#.
+....#
+...#.
+..#..
+.#...
+""")
+s('?', """
+.###.
+#...#
+....#
+...#.
+..#..
+.....
+..#..
+""")
+s('@', """
+.###.
+#...#
+....#
+.##.#
+#.#.#
+#.#.#
+.###.
+""")
+s('A', """
+.###.
+#...#
+#...#
+#####
+#...#
+#...#
+#...#
+""")
+s('B', """
+####.
+#...#
+#...#
+####.
+#...#
+#...#
+####.
+""")
+s('C', """
+.###.
+#...#
+#....
+#....
+#....
+#...#
+.###.
+""")
+s('D', """
+####.
+.#..#
+#...#
+#...#
+#...#
+.#..#
+####.
+""")
+s('E', """
+#####
+#....
+#....
+####.
+#....
+#....
+#####
+""")
+s('F', """
+#####
+#....
+#....
+####.
+#....
+#....
+#....
+""")
+s('G', """
+.###.
+#...#
+#....
+#.###
+#...#
+#...#
+.####
+""")
+s('H', """
+#...#
+#...#
+#...#
+#####
+#...#
+#...#
+#...#
+""")
+s('I', """
+.###.
+..#..
+..#..
+..#..
+..#..
+..#..
+.###.
+""")
+s('J', """
+..###
+...#.
+...#.
+...#.
+...#.
+#..#.
+.##..
+""")
+s('K', """
+#...#
+#..#.
+#.#..
+##...
+#.#..
+#..#.
+#...#
+""")
+s('L', """
+#....
+#....
+#....
+#....
+#....
+#....
+#####
+""")
+s('M', """
+#...#
+##.##
+#.#.#
+#...#
+#...#
+#...#
+#...#
+""")
+s('N', """
+#...#
+#...#
+##..#
+#.#.#
+#..##
+#...#
+#...#
+""")
+s('O', """
+.###.
+#...#
+#...#
+#...#
+#...#
+#...#
+.###.
+""")
+s('P', """
+####.
+#...#
+#...#
+####.
+#....
+#....
+#....
+""")
+s('Q', """
+.###.
+#...#
+#...#
+#...#
+#.#.#
+#..#.
+.##.#
+""")
+s('R', """
+####.
+#...#
+#...#
+####.
+#.#..
+#..#.
+#...#
+""")
+s('S', """
+.####
+#....
+#....
+.###.
+....#
+....#
+####.
+""")
+s('T', """
+#####
+..#..
+..#..
+..#..
+..#..
+..#..
+..#..
+""")
+s('U', """
+#...#
+#...#
+#...#
+#...#
+#...#
+#...#
+.###.
+""")
+s('V', """
+#...#
+#...#
+#...#
+#...#
+#...#
+.#.#.
+..#..
+""")
+s('W', """
+#...#
+#...#
+#...#
+#.#.#
+#.#.#
+##.##
+#...#
+""")
+s('X', """
+#...#
+#...#
+.#.#.
+..#..
+.#.#.
+#...#
+#...#
+""")
+s('Y', """
+#...#
+#...#
+#...#
+.#.#.
+..#..
+..#..
+..#..
+""")
+s('Z', """
+#####
+....#
+...#.
+..#..
+.#...
+#....
+#####
+""")
+s('[', """
+.###.
+.#...
+.#...
+.#...
+.#...
+.#...
+.###.
+""")
+s('\\', """
+.....
+#....
+.#...
+..#..
+...#.
+....#
+.....
+""")
+s(']', """
+.###.
+...#.
+...#.
+...#.
+...#.
+...#.
+.###.
+""")
+s('^', """
+..#..
+.#.#.
+#...#
+.....
+.....
+.....
+.....
+""")
+s('_', """
+.....
+.....
+.....
+.....
+.....
+.....
+#####
+""")
+s('`', """
+.#...
+..#..
+.....
+.....
+.....
+.....
+.....
+""")
+s('a', """
+.....
+.....
+.###.
+....#
+.####
+#...#
+.####
+""")
+s('b', """
+#....
+#....
+####.
+#...#
+#...#
+#...#
+####.
+""")
+s('c', """
+.....
+.....
+.###.
+#....
+#....
+#...#
+.###.
+""")
+s('d', """
+....#
+....#
+.####
+#...#
+#...#
+#...#
+.####
+""")
+s('e', """
+.....
+.....
+.###.
+#...#
+#####
+#....
+.###.
+""")
+s('f', """
+..##.
+.#..#
+.#...
+###..
+.#...
+.#...
+.#...
+""")
+s('g', """
+.....
+.####
+#...#
+#...#
+.####
+....#
+.###.
+""")
+s('h', """
+#....
+#....
+####.
+#...#
+#...#
+#...#
+#...#
+""")
+s('i', """
+..#..
+.....
+.##..
+..#..
+..#..
+..#..
+.###.
+""")
+s('j', """
+...#.
+.....
+..##.
+...#.
+...#.
+#..#.
+.##..
+""")
+s('k', """
+#....
+#....
+#...#
+#..#.
+###..
+#..#.
+#...#
+""")
+s('l', """
+.##..
+..#..
+..#..
+..#..
+..#..
+..#..
+.###.
+""")
+s('m', """
+.....
+.....
+##.#.
+#.#.#
+#.#.#
+#...#
+#...#
+""")
+s('n', """
+.....
+.....
+####.
+#...#
+#...#
+#...#
+#...#
+""")
+s('o', """
+.....
+.....
+.###.
+#...#
+#...#
+#...#
+.###.
+""")
+s('p', """
+.....
+####.
+#...#
+#...#
+####.
+#....
+#....
+""")
+s('q', """
+.....
+.####
+#...#
+#...#
+.####
+....#
+....#
+""")
+s('r', """
+.....
+.....
+#.##.
+##..#
+#....
+#....
+#....
+""")
+s('s', """
+.....
+.....
+.###.
+#....
+.###.
+....#
+####.
+""")
+s('t', """
+.#...
+.#...
+###..
+.#...
+.#...
+.#..#
+..##.
+""")
+s('u', """
+.....
+.....
+#...#
+#...#
+#...#
+#...#
+.####
+""")
+s('v', """
+.....
+.....
+#...#
+#...#
+#...#
+.#.#.
+..#..
+""")
+s('w', """
+.....
+.....
+#...#
+#...#
+#.#.#
+#.#.#
+.#.#.
+""")
+s('x', """
+.....
+.....
+#...#
+.#.#.
+..#..
+.#.#.
+#...#
+""")
+s('y', """
+.....
+#...#
+#...#
+.####
+....#
+#...#
+.###.
+""")
+s('z', """
+.....
+.....
+#####
+...#.
+..#..
+.#...
+#####
+""")
+s('{', """
+...#.
+..#..
+..#..
+.#...
+..#..
+..#..
+...#.
+""")
+s('|', """
+..#..
+..#..
+..#..
+.....
+..#..
+..#..
+..#..
+""")
+s('}', """
+.#...
+..#..
+..#..
+...#.
+..#..
+..#..
+.#...
+""")
+s('~', """
+.....
+.#...
+#.#.#
+...#.
+.....
+.....
+.....
+""")
+
 chars = [chr(c) for c in range(0x20, 0x7f)]
-missing = [c for c in chars if c not in G]
-assert not missing, "missing glyphs: %r" % missing
-assert len(G) == 95, len(G)
+for name, table, height in (("BIG", G, 11), ("SMALL", S, 7)):
+    missing = [c for c in chars if c not in table]
+    assert not missing, "%s is missing glyphs: %r" % (name, missing)
+    assert len(table) == 95, (name, len(table))
+
 
 def bits(row):
     v = 0
@@ -1272,58 +2149,95 @@ def bits(row):
             v |= 1 << (4 - col)
     return v
 
-names = {' ': "' '", "'": "'\\''", '\\': "'\\\\'"}
-lines = []
-for ch in chars:
-    label = names.get(ch, "'%s'" % ch)
-    hexes = ",".join("0x%02X" % bits(r) for r in G[ch])
-    lines.append("/* %-5s */ [%s]," % (label, hexes))
+
+NAMES = {' ': "' '", "'": "'\\''", '\\': "'\\\\'"}
 
 
+def emit(table):
+    out = []
+    for ch in chars:
+        label = NAMES.get(ch, "'%s'" % ch)
+        hexes = ",".join("0x%02X" % bits(r) for r in table[ch])
+        out.append("/* %-5s */ [%s]," % (label, hexes))
+    return "\n".join(out)
 
-TABLE = "\n".join(lines)
+
+TABLE_BIG = emit(G)
+TABLE_SMALL = emit(S)
 
 DISPLAY_RS = "src/display.rs"
-TABLE_START = "static FONT: [[u8; FONT_HEIGHT]; 95] = ["
+TABLES = (
+    ("static FONT_BIG: [[u8; FONT_BIG_HEIGHT]; 95] = [", lambda: TABLE_BIG),
+    ("static FONT_SMALL: [[u8; FONT_SMALL_HEIGHT]; 95] = [", lambda: TABLE_SMALL),
+)
 
 
-def render(s, width=53):
-    """Render a string the way draw_str does, for eyeballing before flashing."""
+LETTER_GAP = 1
+SPACE_ADVANCE = 3
+
+
+def metrics(art):
+    """(leftmost inked column, advance) — mirrors glyph_metrics in display.rs."""
+    cols = [c for c in range(5) if any(row[c] == '#' for row in art)]
+    if not cols:
+        return 0, SPACE_ADVANCE
+    return min(cols), max(cols) - min(cols) + 1 + LETTER_GAP
+
+
+def text_width(text, size="big"):
+    """Rendered width in pixels — what measure_markup returns for plain text."""
+    table = G if size == "big" else S
+    return sum(metrics(table.get(ch, table[' ']))[1] for ch in text)
+
+
+def render(text, size="big", width=53):
+    """Render a string the way draw_markup does, for eyeballing before flashing.
+
+    Not a markup parser — pass plain text and pick the size explicitly.
+    """
+    table, top = (G, 0) if size == "big" else (S, 2)
     grid = [['.'] * width for _ in range(11)]
     x = 0
-    for ch in s:
-        art = G.get(ch, G[' '])
-        for r in range(11):
+    for ch in text:
+        art = table.get(ch, table[' '])
+        left, advance = metrics(art)
+        for r in range(len(art)):
             for c in range(5):
-                if art[r][c] == '#' and 0 <= x + c < width:
-                    grid[r][x + c] = '#'
-        x += 6  # CHAR_ADVANCE
+                if art[r][c] == '#' and 0 <= x + c - left < width:
+                    grid[top + r][x + c - left] = '#'
+        x += advance
     return "\n".join("".join(r) for r in grid)
 
 
-def write_table(path=DISPLAY_RS):
-    """Replace the generated table in display.rs, keeping the rest of the file.
+def write_tables(path=DISPLAY_RS):
+    """Replace both generated tables in display.rs, keeping the rest of the file.
 
-    Matched line-wise: the declaration contains `95]`, so searching the raw
+    Matched line-wise: the declarations contain `95]`, so searching the raw
     text for the closing `];` finds the wrong one.
     """
     src = open(path).read().split("\n")
-    start = next(n for n, l in enumerate(src) if l.startswith(TABLE_START))
-    end = next(n for n in range(start + 1, len(src)) if src[n] == "];")
-    out = src[:start + 1] + TABLE.split("\n") + src[end:]
-    open(path, "w").write("\n".join(out))
-    print("rewrote %d glyphs in %s" % (len(G), path))
+    for decl, table in TABLES:
+        start = next(n for n, l in enumerate(src) if l.startswith(decl))
+        end = next(n for n in range(start + 1, len(src)) if src[n] == "];")
+        src = src[:start + 1] + table().split("\n") + src[end:]
+    open(path, "w").write("\n".join(src))
+    print("rewrote %d big + %d small glyphs in %s" % (len(G), len(S), path))
 
 
 if __name__ == "__main__":
     import sys
     args = sys.argv[1:]
     if "--write" in args:
-        write_table()
+        write_tables()
     elif "--preview" in args:
-        for sample in ["Temp: 21", "13:52", "gjpqy AWM", "u: -12.5"]:
-            print("--- %r  (%d px of 53)" % (sample, len(sample) * 6))
-            print(render(sample))
+        for sample, size in [("Temp: 21", "big"), ("13:52", "big"),
+                             ("gjpqy AWM", "big"), ("Temp: 21.5 C", "small")]:
+            w = text_width(sample, size)
+            print("--- %r  %s  (%d px of 53%s)"
+                  % (sample, size, w, ", scrolls" if w > 53 else ""))
+            print(render(sample, size))
             print()
     else:
-        print(TABLE)
+        print(TABLE_BIG)
+        print()
+        print(TABLE_SMALL)

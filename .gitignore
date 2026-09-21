@@ -4,3 +4,6 @@ firmware/43439A0_clm.bin
 
 # Real config holds WiFi credentials — keep it local. Copy from config.example.rs.
 src/config.rs
+
+# Python bytecode from tools/
+__pycache__/
